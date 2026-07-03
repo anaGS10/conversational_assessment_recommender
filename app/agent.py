@@ -610,6 +610,22 @@ async def _fallback_response(messages: list[Message]) -> ChatResponse:
     )
 
 
+def _narrow_candidates_to_compare(
+    terms: list[str],
+    candidates: list[CatalogItem],
+) -> list[CatalogItem]:
+    """Filter candidate list to only the products mentioned in a comparison query."""
+    narrowed: list[CatalogItem] = []
+    seen: set[str] = set()
+    for term in terms:
+        term_lower = term.lower()
+        for item in candidates:
+            if item.entity_id not in seen and term_lower in item.name.lower():
+                narrowed.append(item)
+                seen.add(item.entity_id)
+    return narrowed or candidates[:2]
+
+
 async def _compare_path(messages: list[Message]) -> ChatResponse:
     """Handle comparison. Include prior recs only when comparing items already in the shortlist."""
     user_text = _latest_user_message(messages)
@@ -625,13 +641,16 @@ async def _compare_path(messages: list[Message]) -> ChatResponse:
                     include_prior = True
                     break
     try:
+        # Narrow candidates to just the products being compared (reduces LLM prompt size)
+        terms = extract_comparison_terms(user_text)
+        compare_targets = _narrow_candidates_to_compare(terms, candidates) if terms else candidates[:2]
         result = await chat_completion(
             RERANK_SYSTEM_PROMPT,
             f"""CONVERSATION:
 {_conversation_text(messages)}
 
-CANDIDATE LIST (for context):
-{_candidate_context(candidates)}
+PRODUCTS TO COMPARE:
+{_candidate_context(compare_targets)}
 
 This is a comparison question. Explain the differences between the products.
 Return JSON with intent="compare", reply explaining differences, selected_entity_ids=[], end_of_conversation=false.""",
