@@ -144,6 +144,8 @@ VAGUE_PATTERNS = [
     r"^i need to hire\b.{0,10}$",
     r"^we need to hire\b.{0,10}$",
     r"^looking for (an? )?assessment\b",
+    r"^need\s+(a|an|to hire)?\s*(developer|engineer)s?\.?$",
+    r"^need\s+(a|an|to hire)?\s*(people|talent|staff|resources?)\.?$",
 ]
 
 CONFIRM_PATTERNS = [
