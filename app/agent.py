@@ -9,6 +9,7 @@ from app.catalog import (
     final_validate_recommendations,
     find_by_name_fragment,
     format_recommendation_table,
+    get_catalog,
     items_for_recommendations,
     items_to_recommendations,
     validate_recommendations,
@@ -199,16 +200,85 @@ def _is_vague_first_turn(messages: list[Message], text: str) -> bool:
     user_turns = sum(1 for m in messages if m.role == "user")
     if user_turns > 1:
         return False
-    if len(text.split()) <= 12:
-        for pattern in VAGUE_PATTERNS:
-            if re.search(pattern, text.strip(), re.IGNORECASE):
-                return True
-        if re.search(r"\b(solution|assessment)\b", text, re.IGNORECASE) and not re.search(
-            r"\b(hiring|java|engineer|contact centre|graduate|sales|operator|admin|rust|leadership)\b",
-            text,
-            re.IGNORECASE,
-        ):
+
+    for pattern in VAGUE_PATTERNS:
+        if re.search(pattern, text.strip(), re.IGNORECASE):
             return True
+
+    t = text.lower()
+
+    has_seniority = bool(re.search(
+        r"\b(entry|junior|mid|senior|executive|director|manager|cxo|vp|graduate|student|years?)\b", t,
+    ))
+    has_skill = bool(re.search(
+        r"\b(java|python|sql|react|angular|node|aws|docker|kubernetes|linux|rust|excel|word|msword|"
+        r"powerpoint|ppt|acrobat|reader|visio|outlook|access|database|nosql|microservice|"
+        r"full.?stack|backend|frontend|api|rest|soap|graphql|c(?:\+\+)?|c#|php|ruby|swift|kotlin|"
+        r"scala|go|html|css|javascript|typescript|jquery|bootstrap|english|spanish|french|"
+        r"mandarin|german|italian|portuguese|russian|turkish|arabic|hindi|japanese|korean|"
+        r"chinese|indonesian|malay|thai|vietnamese|urdu|persian|hebrew|us\.english|uk\.english|"
+        r"inbound|outbound|telecommunications|transportation|customer\.experience|customer\.success|"
+        r"customer\.engagement|customer\.satisfaction|customer\.loyalty|customer\.retention|"
+        r"customer\.acquisition|general coding|programming|coding|technical|contact\.centre|admin|"
+        r"sales|finance|leadership|personality|safety|mechanical|electrical|chemical|biomedical|"
+        r"environmental|industrial|material|medical|nuclear|systems)\b", t,
+    ))
+    has_role = bool(re.search(
+        r"\b(developer|engineer|manager|leader|analyst|agent|operator|representative|assistant|customer.service|customer.support)\b", t,
+    ))
+
+    return not (has_seniority and has_skill)
+
+
+def _extract_mentioned_skills(text: str) -> set[str]:
+    t = text.lower()
+    return set(re.findall(
+        r"\b(java|python|sql|react|angular|node|aws|docker|kubernetes|linux|rust|excel|word|msword|"
+        r"powerpoint|ppt|acrobat|reader|visio|outlook|access|database|nosql|microservice|"
+        r"full.?stack|backend|frontend|api|rest|soap|graphql|c(?:\+\+)?|c#|php|ruby|swift|kotlin|"
+        r"scala|go|html|css|javascript|typescript|jquery|bootstrap|english|spanish|french|"
+        r"mandarin|german|italian|portuguese|russian|turkish|arabic|hindi|japanese|korean|"
+        r"chinese|indonesian|malay|thai|vietnamese|urdu|persian|hebrew|us\.english|uk\.english|"
+        r"inbound|outbound|telecommunications|transportation|customer\.experience|customer\.success|"
+        r"customer\.engagement|customer\.satisfaction|customer\.loyalty|customer\.retention|"
+        r"customer\.acquisition|general coding|programming|coding|technical|contact\.centre|admin|"
+        r"sales|finance|leadership|personality|safety|mechanical|electrical|chemical|biomedical|"
+        r"environmental|industrial|material|medical|nuclear|systems)\b", t,
+    ))
+
+
+_CATALOG_TEXT_CACHE: str | None = None
+
+
+def _all_catalog_search_text() -> str:
+    global _CATALOG_TEXT_CACHE
+    if _CATALOG_TEXT_CACHE is None:
+        parts: list[str] = []
+        for item in get_catalog():
+            parts.append(item.name.lower())
+            parts.append(item.description.lower())
+            for tag in item.assessment_tags:
+                parts.append(tag.lower())
+        _CATALOG_TEXT_CACHE = " ".join(parts)
+    return _CATALOG_TEXT_CACHE
+
+
+def _any_skill_missing_from_catalog(text: str) -> bool:
+    skills = _extract_mentioned_skills(text)
+    if not skills:
+        return False
+    catalog_text = _all_catalog_search_text()
+    return any(s not in catalog_text for s in skills)
+
+
+def _assistant_reported_skill_gap(messages: list[Message]) -> bool:
+    for msg in reversed(messages):
+        if msg.role == "assistant":
+            return bool(re.search(
+                r"(no|don't|doesn't|do not|does not).*"
+                r"(specific (assessment|test)|available|catalog doesn't|not .* in (our|the) catalog)",
+                msg.content, re.IGNORECASE,
+            ))
     return False
 
 
@@ -218,6 +288,9 @@ def _first_turn_knowledge_gap(messages: list[Message], text: str) -> bool:
     if user_turns > 1:
         return False
     t = text.lower()
+    # Skill mentioned but not found in any catalog item
+    if _any_skill_missing_from_catalog(text):
+        return True
     # Contact centre without language mention
     if re.search(r"\bcontact centre\b", t) and not re.search(
         r"\b(language|english|spanish|french|mandarin|german)\b", t
@@ -230,9 +303,6 @@ def _first_turn_knowledge_gap(messages: list[Message], text: str) -> bool:
         return True
     # Healthcare admin with language/catalog constraints (HIPAA, bilingual)
     if re.search(r"\bhipaa\b", t) or re.search(r"\bbilingual\b", t):
-        return True
-    # Niche or uncommon technical skill (only if skills unknown — not when specific tools named)
-    if re.search(r"\b(?:i'?m hiring|need a)\b.*\brust\b", t):
         return True
     # JD-style query with multiple technologies that needs narrowing
     if re.search(r"\b(jd|job description|here'?s (the|a) (role|jd|position|req|opening))\b", text, re.IGNORECASE) and \
@@ -846,6 +916,10 @@ Return JSON. selected_entity_ids must be [].""",
             )
         else:
             in_clarify_mode = True
+
+    # Skill-gap follow-up: assistant said skill isn't in catalog, user picked a fallback
+    if _last_assistant_was_clarify(messages) and _assistant_reported_skill_gap(messages):
+        return await _recommend_path(messages, hint)
 
     if in_clarify_mode and hint is None:
         hint = "clarify"
