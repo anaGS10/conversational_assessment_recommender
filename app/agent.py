@@ -63,6 +63,12 @@ When to clarify instead of recommend:
 - Catalog constraints need discussion first (language availability, missing specific tests)
 
 Examples of clarifying turns:
+  User: [We need a developer]
+  Agent: { intent: "clarify", selected_entity_ids: [], reply: "What specific skills/technologies and experience level are you looking for?" }
+
+  User: [We are hiring for a chef]
+  Agent: { intent: "clarify", selected_entity_ids: [], reply: "We don't have any assessments for chefs. The SHL catalog does not have anything related to cooking or food preparation. If you need help with technology, financial services, or leadership, I can help with that." }
+  
   User: "We need a solution for senior leadership."
   Agent: { intent: "clarify", selected_entity_ids: [], reply: "Who is this meant for?" }
 
@@ -74,12 +80,6 @@ Examples of clarifying turns:
 
   User: [We need a Java developer]
   Agent: { intent: "clarify", selected_entity_ids: [], reply: "What seniority level or experience are you looking for?" }
-
-  User: [We need a developer]
-  Agent: { intent: "clarify", selected_entity_ids: [], reply: "What specific skills/technologies and experience level are you looking for?" }
-
-  User: [We are hiring for a chef]
-  Agent: { intent: "clarify", selected_entity_ids: [], reply: "We don't have any assessments for chefs. The SHL catalog does not have anything related to cooking or food preparation. If you need help with technology, financial services, or leadership, I can help with that." }
 
 --- recommend ---
 Return 1-10 IDs when the user has given enough detail to build a shortlist. This includes after clarifying questions have been answered.
